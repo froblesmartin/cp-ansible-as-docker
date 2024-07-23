@@ -1,0 +1,6 @@
+ansible-core==2.14.2
+ansible-pylibssh
+PyYaml==6.0
+jproperties
+ansible-runner
+selinux
