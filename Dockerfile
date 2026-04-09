@@ -1,9 +1,9 @@
 FROM --platform=linux/amd64 ubuntu:jammy
 
-ARG CP_VERSION=7.6.1
-ARG COMMUNITY_CRYPTO=2.20.0
-ARG COMMUNITY_GENERAL=8.6.1
-ARG ANSIBLE_POSIX=1.5.4
+ARG CP_VERSION=7.9.6
+ARG COMMUNITY_CRYPTO=3.1.1
+ARG COMMUNITY_GENERAL=12.5.0
+ARG ANSIBLE_POSIX=2.1.0
 ENV ANSIBLE_HASH_BEHAVIOUR=merge
 
 # Copy Python dependency file inside container, then install dependencies using pip.
