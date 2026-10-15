@@ -1,3 +1,9 @@
+# Defaults for every SSH connection Ansible opens. Mount your own file over
+# /etc/ssh/ssh_config.d/99-cp-ansible.conf to replace them -- see the README.
 Host *
-   StrictHostKeyChecking no
-   UserKnownHostsFile=/dev/null
+   # Trust on first use: an unknown host key is recorded and accepted, a
+   # changed one is refused. The container is ephemeral, so mount a
+   # known_hosts to keep that record -- otherwise every run is a first use
+   # and nothing is ever verified.
+   StrictHostKeyChecking accept-new
+   UserKnownHostsFile ~/.ssh/known_hosts
