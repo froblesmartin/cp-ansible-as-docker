@@ -41,7 +41,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Read CP version from the Dockerfile
         id: version
@@ -50,7 +50,7 @@ jobs:
           cp_version=$(grep -m1 '^ARG CP_VERSION=' Dockerfile | cut -d= -f2)
           if [ -z "$cp_version" ]; then
             echo "::error::could not read ARG CP_VERSION from the Dockerfile"
-            exit 1My
+            exit 1
           fi
           echo "cp_version=${cp_version}" >> "$GITHUB_OUTPUT"
           echo "cp_minor=${cp_version%.*}" >> "$GITHUB_OUTPUT"
@@ -80,10 +80,10 @@ jobs:
             echo '::warning::DOCKERHUB_TOKEN is not set, pushing to GHCR only'
           fi
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -91,14 +91,14 @@ jobs:
 
       - name: Log in to Docker Hub
         if: steps.registries.outputs.dockerhub == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Tags for the standard image
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.registries.outputs.images }}
           tags: |
@@ -112,7 +112,7 @@ jobs:
 
       - name: Tags for the air-gapped image
         id: meta-airgapped
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.registries.outputs.images }}
           flavor: suffix=-airgapped,onlatest=true
@@ -127,7 +127,7 @@ jobs:
 
       - name: Build and push the standard image
         if: env.VARIANTS != 'airgapped'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # The Dockerfile pins FROM --platform=linux/amd64, so there is only
@@ -163,7 +163,7 @@ jobs:
 
       - name: Build and push the air-gapped image
         if: env.VARIANTS != 'standard'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
