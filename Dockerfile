@@ -1,31 +1,33 @@
-FROM --platform=linux/amd64 ubuntu:noble
-
-# Each ARG/ENV invalidates the build cache for everything below it, whether or
-# not the steps below actually reference it, so both are declared as late as
-# their first use allows. Runtime-only settings live at the bottom.
+FROM --platform=linux/amd64 redhat/ubi10
 
 ARG PYTHON_VERSION=3.12
-# keytool, for building the keystores/truststores cp-ansible expects. The JRE
-# is enough for that and for openssl; swap in openjdk-21-jdk-headless if you
-# also need jar/jarsigner, at a cost of ~90 MB.
-ARG JAVA_PACKAGE=openjdk-21-jre-headless
-RUN apt-get update && apt-get install -y \
-    sshpass \
+ARG JAVA_PACKAGE=java-21-openjdk-headless
+RUN dnf -y --disableplugin=subscription-manager install \
     gcc \
-    curl \
+    make \
     openssl \
-    ${JAVA_PACKAGE} \
+    openssh-clients \
     python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-venv \
-    && apt-get clean all
+    python${PYTHON_VERSION}-pip \
+    ${JAVA_PACKAGE} \
+    && dnf clean all && rm -rf /var/cache/dnf
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 && \
-    update-alternatives --set python3 /usr/bin/python${PYTHON_VERSION}
+# sshpass is in neither the UBI repos nor EPEL 10, so it is built from source.
+# Needed only for password authentication; key-based auth never calls it.
+ARG SSHPASS_VERSION=1.10
+ARG SSHPASS_SHA256=ad1106c203cbb56185ca3bad8c6ccafca3b4064696194da879f81c8d7bdfeeda
+RUN curl -fSL --retry 3 --retry-delay 5 -o /tmp/sshpass.tar.gz \
+      "https://downloads.sourceforge.net/project/sshpass/sshpass/${SSHPASS_VERSION}/sshpass-${SSHPASS_VERSION}.tar.gz" && \
+    echo "${SSHPASS_SHA256}  /tmp/sshpass.tar.gz" | sha256sum -c - && \
+    tar -xzf /tmp/sshpass.tar.gz -C /tmp && \
+    cd /tmp/sshpass-${SSHPASS_VERSION} && \
+    ./configure --prefix=/usr/local && make && make install && \
+    rm -rf /tmp/sshpass.tar.gz /tmp/sshpass-${SSHPASS_VERSION}
 
 COPY requirements.txt /tmp/requirements.txt
 ENV VIRTUAL_ENV=/opt/ansible
 ENV PATH=${VIRTUAL_ENV}/bin:${PATH}
-RUN python3 -m venv ${VIRTUAL_ENV} && \
+RUN python${PYTHON_VERSION} -m venv ${VIRTUAL_ENV} && \
     python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
 
@@ -103,8 +105,6 @@ RUN if [ "${INCLUDE_ARTIFACTS}" = "true" ]; then \
         echo "INCLUDE_ARTIFACTS=${INCLUDE_ARTIFACTS}: skipping artifact downloads"; \
     fi
 
-# System-wide rather than /root/.ssh/config, so the settings apply to whichever
-# uid the container runs as. /etc/ssh/ssh_config already Includes this directory.
 COPY ssh-config /etc/ssh/ssh_config.d/99-cp-ansible.conf
 
 # Be safe, don't run as root

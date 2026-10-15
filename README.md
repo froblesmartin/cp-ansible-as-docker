@@ -1,7 +1,8 @@
 # cp-ansible as Docker
 
 A Docker image that packages [cp-ansible](https://github.com/confluentinc/cp-ansible)
-as a ready-to-use Ansible control node for Confluent Platform 8.3.1.
+as a ready-to-use Ansible control node for Confluent Platform 8.3.1. It is built
+on `redhat/ubi10` and pins Python to 3.12 (`PYTHON_VERSION`).
 
 ## Published images
 
@@ -236,23 +237,14 @@ The wheels are distro-agnostic but tied to the interpreter: `cffi` and
 `PyYAML` are `cp312`-tagged, so the managed nodes need Python 3.12. The glibc
 floor is 2.17, which RHEL 8 already clears.
 
-### Still fetched from the OS repositories
-
-These come from the managed nodes' own repos, so they need a local mirror
-either way: the JDK (`java-25-openjdk` / `openjdk-17-jdk` / `openjdk-25-jdk`),
-`openssl`, `unzip`, `python3-pip`, `python3-pyyaml`, `python3-debian`,
-`ca-certificates`. On Ubuntu, a non-default `ubuntu_java_package_name` also
-pulls in the `ppa:openjdk-r/ppa` PPA -- set `custom_java_path` to a
-pre-installed JDK to avoid it.
-
 ## Build arguments
 
-| Purpose | Arguments |
-| --- | --- |
-| Internal mirrors | `CP_ARTIFACTS_BASEURL`, `MAVEN_BASEURL`, `CONFLUENT_CLI_BASEURL` |
-| Track cp-ansible's version defaults | `JOLOKIA_VERSION`, `JMXEXPORTER_VERSION`, `CONFLUENT_CLI_VERSION`, `C3_NEXT_GEN_VERSION`, `USM_AGENT_VERSION` |
-| Managed nodes differing from the defaults | `TARGET_GOARCH`, `TARGET_WHEELS`, `TARGET_WHEEL_PLATFORMS`, `TARGET_PYTHON_VERSION` |
-| Control node itself | `ANSIBLE_UID`, `PYTHON_VERSION`, `JAVA_PACKAGE`, `CP_VERSION` |
+| Purpose                                   | Arguments                                                                                                     |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Internal mirrors                          | `CP_ARTIFACTS_BASEURL`, `MAVEN_BASEURL`, `CONFLUENT_CLI_BASEURL`                                              |
+| Track cp-ansible's version defaults       | `JOLOKIA_VERSION`, `JMXEXPORTER_VERSION`, `CONFLUENT_CLI_VERSION`, `C3_NEXT_GEN_VERSION`, `USM_AGENT_VERSION` |
+| Managed nodes differing from the defaults | `TARGET_GOARCH`, `TARGET_WHEELS`, `TARGET_WHEEL_PLATFORMS`, `TARGET_PYTHON_VERSION`                           |
+| Control node itself                       | `ANSIBLE_UID`, `PYTHON_VERSION`, `JAVA_PACKAGE`, `CP_VERSION`, `SSHPASS_VERSION`                              |
 
 The image ships Java 21 and `openssl` so `keytool` is available for building
 the keystores and truststores cp-ansible expects.
