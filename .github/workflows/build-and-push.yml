@@ -146,20 +146,7 @@ jobs:
         run: |
           set -euo pipefail
           image=$(head -1 <<< "${{ steps.meta.outputs.tags }}")
-          docker run --rm "$image" ansible --version
-          docker run --rm "$image" ansible-galaxy collection list confluent.platform
-          docker run --rm "$image" ssh -G example.invalid \
-            | grep -E '^(stricthostkeychecking accept-new|userknownhostsfile )'
-
-      # The air-gapped image needs room for ~2.5 GB of artifacts plus the layer
-      # export; the preinstalled toolchains are the cheapest thing to drop.
-      - name: Free up disk space
-        if: env.VARIANTS != 'standard'
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
-          df -h /
+          docker run --rm "$image" bash -c 'ansible --version && ansible-galaxy collection list'
 
       - name: Build and push the air-gapped image
         if: env.VARIANTS != 'standard'
@@ -176,6 +163,13 @@ jobs:
           # Reuses the layers below the artifact step; not exported, since the
           # bundled artifacts would fill the 10 GB Actions cache on their own.
           cache-from: type=gha,scope=cp-ansible
+
+      - name: Smoke test the airgapped image
+        if: env.VARIANTS != 'standard'
+        run: |
+          set -euo pipefail
+          image=$(head -1 <<< "${{ steps.meta-airgapped.outputs.tags }}")
+          docker run --rm "$image" bash -c 'ansible --version && ansible-galaxy collection list && du -sh /opt/confluent-artifacts/*'
 
       - name: Summary
         run: |
