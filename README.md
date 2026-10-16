@@ -6,19 +6,21 @@ on `redhat/ubi10` and pins Python to 3.12 (`PYTHON_VERSION`).
 
 ## Published images
 
-Every push to a version branch (`8.3`, `7.9`, ...) publishes two `linux/amd64`
-images to both registries:
+Every push to a version branch (`8.3`, `7.9`, ...) publishes a `linux/amd64`
+image to both registries:
 
 ```shell
 docker pull ghcr.io/froblesmartin/cp-ansible-as-docker:8.3.1
 docker pull froblesmartin/cp-ansible:8.3.1
 ```
 
-The `-airgapped` suffix (`:8.3.1-airgapped`) is the same image with the install
-artifacts bundled -- see [Air-gapped installs](#air-gapped-installs). Tags are
-the full and the `major.minor` CP version, read from the Dockerfile's
+Tags are the full and the `major.minor` CP version, read from the Dockerfile's
 `CP_VERSION`, plus `sha-<commit>`. `latest` is applied only by a manual run of
 the workflow with **Also tag as latest** ticked.
+
+The published image carries no Confluent Platform artifacts. Bundling them is
+a build-time option you run yourself -- see
+[Air-gapped installs](#air-gapped-installs).
 
 Docker Hub needs the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository
 secrets; without them the workflow publishes to GHCR alone and warns. Set the
@@ -159,6 +161,12 @@ image. Off by default, since it adds ~2.5 GB:
 docker build --build-arg INCLUDE_ARTIFACTS=true -t cp-ansible:8.3.1 .
 ```
 
+This variant is deliberately **not published**. Confluent Platform is not
+freely redistributable -- Control Center and other components are covered by
+the Confluent Enterprise licence -- so pushing an image containing them to a
+public registry would be redistribution. Build it yourself, under your own
+entitlement, and keep it in your own registry.
+
 They land in `/opt/confluent-artifacts`, also exported as `$CP_ARTIFACTS_DIR`:
 
 ```
@@ -248,3 +256,41 @@ floor is 2.17, which RHEL 8 already clears.
 
 The image ships Java 21 and `openssl` so `keytool` is available for building
 the keystores and truststores cp-ansible expects.
+
+## Integration test
+
+`test/` holds a Compose stack that builds the image and uses it for what it is
+for: installing Confluent Platform. Two UBI 10 containers run systemd as PID 1
+and sshd, which is how cp-ansible's own molecule scenarios stand in for managed
+nodes, and the control node drives them over SSH.
+
+```shell
+docker compose -f test/compose.yaml run --build --rm control
+docker compose -f test/compose.yaml down -v
+```
+
+The exit code of the `control` service is the exit code of the test. It covers,
+in order:
+
+1. **Image contents** -- `ansible --version`, the `confluent.platform` version,
+   PyYAML's C loader, `sshpass`, `keytool`.
+2. **Key-based SSH** -- a `ping` against both nodes, and `known_hosts` actually
+   gaining entries through `accept-new`.
+3. **Password SSH** -- the same `ping` through the source-built `sshpass`.
+4. **`confluent.platform.validate_hosts`** -- the collection's own preflight.
+5. **`confluent.platform.all`** -- a controller on `node1` and a broker on
+   `node2`, Community edition, followed by a produce and consume that asserts
+   the message came back.
+
+Community edition keeps the test off anything licensed, `installation_method:
+package` exercises the repository path rather than the archive, and
+`confluent_cli_download_enabled: false` keeps it off S3. The
+[`ansible.cfg`](ansible.cfg) mounted into the control node is the same file the
+section above tells you to use, so the shipped configuration is what gets
+tested.
+
+`confluent.platform.all` takes about eight minutes, on top of the two image
+builds -- the nodes pull CP packages from Confluent's repositories on every
+run. cp-ansible asserts 7 GB of memory per host, and a container sees the whole
+machine's, so give the Docker VM at least that much or `validate_hosts` will
+stop the run before it starts.

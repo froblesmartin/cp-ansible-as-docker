@@ -110,7 +110,8 @@ COPY ssh-config /etc/ssh/ssh_config.d/99-cp-ansible.conf
 # Be safe, don't run as root
 ARG ANSIBLE_UID=1001
 ENV HOME=/home/ansible
-RUN useradd --create-home --home-dir ${HOME} --uid ${ANSIBLE_UID} --shell /bin/bash ansible
+RUN useradd --create-home --home-dir ${HOME} --uid ${ANSIBLE_UID} --shell /bin/bash ansible && \
+    install -d -o ansible -g ansible -m 0700 ${HOME}/.ssh
 
 USER ansible
 WORKDIR ${HOME}

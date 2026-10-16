@@ -10,14 +10,11 @@ on:
       - 'Dockerfile'
       - 'requirements.txt'
       - 'ssh-config'
+      - 'ansible.cfg'
+      - 'test/**'
       - '.github/workflows/build-and-push.yml'
   workflow_dispatch:
     inputs:
-      variants:
-        description: 'Which images to build'
-        type: choice
-        default: both
-        options: [both, standard, airgapped]
       tag_latest:
         description: 'Also tag as latest'
         type: boolean
@@ -31,14 +28,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  VARIANTS: ${{ inputs.variants || 'both' }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
-    # The air-gapped image pulls ~2.5 GB of artifacts at build time.
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v7
@@ -96,7 +89,7 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Tags for the standard image
+      - name: Tags
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -110,28 +103,52 @@ jobs:
             org.opencontainers.image.title=cp-ansible as Docker
             org.opencontainers.image.description=Ansible control node for Confluent Platform ${{ steps.version.outputs.cp_version }}
 
-      - name: Tags for the air-gapped image
-        id: meta-airgapped
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ steps.registries.outputs.images }}
-          flavor: suffix=-airgapped,onlatest=true
-          tags: |
-            type=raw,value=${{ steps.version.outputs.cp_version }}
-            type=raw,value=${{ steps.version.outputs.cp_minor }}
-            type=raw,value=latest,enable=${{ inputs.tag_latest == true }}
-            type=sha,format=short
-          labels: |
-            org.opencontainers.image.title=cp-ansible as Docker (air-gapped)
-            org.opencontainers.image.description=Ansible control node for Confluent Platform ${{ steps.version.outputs.cp_version }}, with the install artifacts bundled
-
-      - name: Build and push the standard image
-        if: env.VARIANTS != 'airgapped'
+      - name: Build
         uses: docker/build-push-action@v7
         with:
           context: .
           # The Dockerfile pins FROM --platform=linux/amd64, so there is only
           # one platform to build.
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: cp-ansible:test
+          cache-from: type=gha,scope=cp-ansible
+          cache-to: type=gha,mode=max,scope=cp-ansible
+
+      - name: Integration test
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          docker compose -f test/compose.yaml build keygen
+          docker compose -f test/compose.yaml run --rm --no-TTY control
+
+      # systemd logs to the journal, not to the container's stdout, so
+      # `compose logs` on these nodes is empty. Go in and fetch it.
+      - name: Managed node diagnostics
+        if: failure()
+        run: |
+          docker compose -f test/compose.yaml ps -a
+          for node in node1 node2; do
+            id=$(docker compose -f test/compose.yaml ps -aq "$node") || continue
+            [ -n "$id" ] || continue
+            echo "::group::${node} healthcheck probes"
+            docker inspect --format '{{json .State.Health}}' "$id" | jq . || true
+            echo "::endgroup::"
+            echo "::group::${node} units and sshd journal"
+            docker exec "$id" systemctl --failed --no-pager || true
+            docker exec "$id" journalctl -u sshd -b --no-pager -n 200 || true
+            echo "::endgroup::"
+          done
+
+      - name: Tear the test environment down
+        if: always()
+        run: docker compose -f test/compose.yaml down -v --remove-orphans
+
+      - name: Push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
           platforms: linux/amd64
           push: true
           provenance: false
@@ -139,37 +156,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=cp-ansible
-          cache-to: type=gha,mode=max,scope=cp-ansible
-
-      - name: Smoke test the standard image
-        if: env.VARIANTS != 'airgapped'
-        run: |
-          set -euo pipefail
-          image=$(head -1 <<< "${{ steps.meta.outputs.tags }}")
-          docker run --rm "$image" bash -c 'ansible --version && ansible-galaxy collection list'
-
-      - name: Build and push the air-gapped image
-        if: env.VARIANTS != 'standard'
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          build-args: INCLUDE_ARTIFACTS=true
-          tags: ${{ steps.meta-airgapped.outputs.tags }}
-          labels: ${{ steps.meta-airgapped.outputs.labels }}
-          annotations: ${{ steps.meta-airgapped.outputs.annotations }}
-          # Reuses the layers below the artifact step; not exported, since the
-          # bundled artifacts would fill the 10 GB Actions cache on their own.
-          cache-from: type=gha,scope=cp-ansible
-
-      - name: Smoke test the airgapped image
-        if: env.VARIANTS != 'standard'
-        run: |
-          set -euo pipefail
-          image=$(head -1 <<< "${{ steps.meta-airgapped.outputs.tags }}")
-          docker run --rm "$image" bash -c 'ansible --version && ansible-galaxy collection list && du -sh /opt/confluent-artifacts/*'
 
       - name: Summary
         run: |
@@ -177,7 +163,6 @@ jobs:
             echo '### Pushed images'
             echo
             echo '```'
-            if [ "${VARIANTS}" != 'airgapped' ]; then echo '${{ steps.meta.outputs.tags }}'; fi
-            if [ "${VARIANTS}" != 'standard' ]; then echo '${{ steps.meta-airgapped.outputs.tags }}'; fi
+            echo '${{ steps.meta.outputs.tags }}'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

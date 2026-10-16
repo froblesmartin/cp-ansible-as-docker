@@ -1,0 +1,86 @@
+#  docker compose -f test/compose.yaml run --rm control
+#  docker compose -f test/compose.yaml down -v
+#
+# Builds the control node image from the repository root and installs Confluent
+# Platform Community onto two systemd containers with it. The exit code of the
+# control service is the exit code of the test.
+
+name: cp-ansible-test
+
+volumes:
+  # A throwaway SSH keypair, generated once and shared between the control node
+  # and the managed nodes. Nothing here outlives `compose down -v`.
+  keys:
+
+# node1 and node2 differ only in their hostname.
+x-node: &node
+  build: ./node
+  image: cp-ansible-test-node
+  # systemd needs its own cgroup subtree and a writable /sys/fs/cgroup.
+  privileged: true
+  cgroup: host
+  volumes:
+    - keys:/keys:ro
+    - /sys/fs/cgroup:/sys/fs/cgroup:rw
+  depends_on:
+    keygen:
+      condition: service_completed_successfully
+  healthcheck:
+    # A real key-based login, because that is the only thing the control node
+    # needs. `systemctl is-active sshd` goes true about a second into boot,
+    # well before the rest of the system is in a state to take a login, and a
+    # node that answers on port 22 but drops the connection is worse than one
+    # that is still starting: it reaches the control node as UNREACHABLE.
+    test:
+      - CMD-SHELL
+      - install -m 0600 /keys/id_ed25519 /tmp/healthcheck_key &&
+        ssh -i /tmp/healthcheck_key -o BatchMode=yes -o ConnectTimeout=5
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        ansible@localhost true
+    interval: 3s
+    timeout: 10s
+    retries: 20
+    # Failures inside the start period do not count against retries, so this
+    # waits out a slow boot without being patient about a broken one.
+    start_period: 60s
+
+services:
+  keygen:
+    build: ./node
+    image: cp-ansible-test-node
+    command:
+      - bash
+      - -c
+      - test -f /keys/id_ed25519 ||
+        { ssh-keygen -t ed25519 -N '' -C cp-ansible-test -f /keys/id_ed25519 &&
+          chmod 644 /keys/id_ed25519; }
+    volumes:
+      - keys:/keys
+
+  node1:
+    <<: *node
+    hostname: node1
+
+  node2:
+    <<: *node
+    hostname: node2
+
+  control:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: cp-ansible:test
+    depends_on:
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+    volumes:
+      - keys:/keys:ro
+      - ./inventory:/inventory:ro
+      - ./control:/control:ro
+      # the ansible.cfg the README tells users to mount, tested as shipped
+      - ../ansible.cfg:/ansible.cfg:ro
+    environment:
+      ANSIBLE_CONFIG: /ansible.cfg
+    command: ["/control/run.sh"]
