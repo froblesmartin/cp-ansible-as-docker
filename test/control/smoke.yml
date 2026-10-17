@@ -1,0 +1,43 @@
+---
+# Proves the cluster cp-ansible just installed actually carries a message,
+# rather than that systemd merely started something.
+- name: Produce and consume through the new broker
+  hosts: kafka_broker
+  become: true
+  gather_facts: false
+  vars:
+    topic: cp-ansible-smoke
+    bootstrap: node2:9092
+  tasks:
+    - name: Wait for the broker to accept connections
+      ansible.builtin.wait_for:
+        port: 9092
+        timeout: 180
+
+    - name: Create a topic
+      ansible.builtin.command: >
+        kafka-topics --bootstrap-server {{ bootstrap }}
+        --create --if-not-exists --topic {{ topic }}
+        --partitions 1 --replication-factor 1
+      changed_when: true
+
+    - name: Produce a message
+      ansible.builtin.shell: >
+        set -o pipefail;
+        echo 'hello-from-cp-ansible' |
+        kafka-console-producer --bootstrap-server {{ bootstrap }} --topic {{ topic }}
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Consume it back
+      ansible.builtin.command: >
+        kafka-console-consumer --bootstrap-server {{ bootstrap }}
+        --topic {{ topic }} --from-beginning --max-messages 1 --timeout-ms 60000
+      register: consumed
+      changed_when: false
+
+    - name: The message survived the round trip
+      ansible.builtin.assert:
+        that: "'hello-from-cp-ansible' in consumed.stdout"
+        success_msg: "produced and consumed through {{ bootstrap }}"

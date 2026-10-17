@@ -1,0 +1,8 @@
+# https://pypi.org/project/ansible-core/#history
+ansible-core==2.18.19
+ansible-pylibssh
+PyYaml==6.0.2
+jproperties
+ansible-runner
+selinux
+bcrypt
